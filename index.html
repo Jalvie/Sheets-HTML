@@ -111,7 +111,7 @@
             return;
           }
           let absUrl = new URL(val, base).pathname + new URL(val, base).search + new URL(val, base).hash;
-          el.setAttribute(attr, encodeUVPath(absUrl));
+          el.setAttribute(attr, BASE_URL + encodeUVPath(absUrl));
         });
         // Extract head elements (title, meta, link, style, etc.)
         const headElements = Array.from(doc.head.children).map(el => el.cloneNode(true));
