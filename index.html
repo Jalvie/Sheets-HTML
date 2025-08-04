@@ -1,83 +1,152 @@
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.bundle.js"></script>
-<script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.config.js"></script>
-<script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/sw.js", {
-          scope: __uv$config.prefix,
+  <head>
+    <meta charset="UTF-8" />
+    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.bundle.js"></script>
+    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.config.js"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register(
+            "https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/sw.js",
+            {
+              scope: __uv$config.prefix,
+            }
+          );
         });
-      });
-    }
-</script>
-<style>
-body {
-background-color: #111;
-color: white;
-font-family: roboto, sans-serif;
-padding: 25px;
-}
-main {
-display: grid;
-justify-items: center;
-background: linear-gradient(131deg, rgb(156, 131, 255) 42%, rgba(224, 240, 16, 0.937) 70%, rgb(255, 144, 81) 75%);
-background-clip: text;
--webkit-background-clip: text;
-color: transparent;
-}
-h1 {
-font-size: 40px;
-}
-h2 {
-margin-top: 20px;
-}
-input {
-width: 300px;
-height: 60px;
-border-radius: 15px;
-outline: none;
-border: none;
-background: #1e1e1e;
-color: white;
-font-family: roboto, sans-serif;
-font-size: 20px;
-}
-@property --angle {
-syntax: "<angle>";
-initial-value: 0deg;
-inherits: false;
-}
-.inputborder {
-padding: 4px;
-position: relative;
-border-radius: 15px;
-background: conic-gradient(from var(--angle), blue, transparent 20%);
-animation: spin 1.5s linear infinite;
-}
-@keyframes spin {
-from {
---angle: 0deg;
-}
-to {
---angle: 360deg;
-}
-}
-</style>
-</head>
-<body>
-<main>
-<h1>Coldnova</h1>
-<h2>Get around blockers</h2>
-<form onsubmit="g(event)">
-<div class="inputborder">
-<input placeholder="Search anything" id="url" type="url" required>
-</div>
-<embed id="mainframe">
-</form>
-</main>
-<script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/assets/js/script.js"></script>
-</body>
+      }
+    </script>
+    <style>
+      html, body {
+        height: 100%;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background-color: #111;
+        color: white;
+        font-family: roboto, sans-serif;
+        height: 100vh;
+        width: 100vw;
+        margin: 0;
+        padding: 0;
+      }
+      #proxy-content {
+        min-height: 100vh;
+        min-width: 100vw;
+        background: #111;
+        color: white;
+        box-sizing: border-box;
+      }
+      @property --angle {
+        syntax: "<angle>";
+        initial-value: 0deg;
+        inherits: false;
+      }
+      .inputborder {
+        padding: 4px;
+        position: relative;
+        border-radius: 15px;
+        background: conic-gradient(from var(--angle), blue, transparent 20%);
+        animation: spin 1.5s linear infinite;
+      }
+      @keyframes spin {
+        from {
+          --angle: 0deg;
+        }
+        to {
+          --angle: 360deg;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="proxy-content"></div>
+    <script>
+      // UV Proxy base
+      const BASE_URL = 'https://coldnova.xyz';
+      const contentDiv = document.getElementById('proxy-content');
+      let currentPath = '/';
+
+      // Utility to encode a path for UV
+      function encodeUVPath(path) {
+        // For this example, just encodeURIComponent, but UV may use a different encoding
+        return '/uv' + path.split('/').map(encodeURIComponent).join('/');
+      }
+
+      // Fetch and render a page through the proxy
+      async function fetchAndRender(path) {
+        currentPath = path;
+        const proxiedUrl = `${BASE_URL}${path}`;
+        try {
+          const resp = await fetch(proxiedUrl, { credentials: 'omit' });
+          if (!resp.ok) throw new Error('Failed to fetch');
+          let html = await resp.text();
+          // Parse and rewrite
+          const { bodyHTML, headElements } = rewriteRelativePathsAndExtractHead(html, path);
+          // Render body
+          contentDiv.innerHTML = bodyHTML;
+          // Render head elements
+          updateHead(headElements);
+          interceptLinks();
+        } catch (e) {
+          contentDiv.innerHTML = `<div style='color:red;padding:2em;'>Failed to load: ${e.message}</div>`;
+        }
+      }
+
+      // Rewrite relative paths and extract head elements
+      function rewriteRelativePathsAndExtractHead(html, basePath) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const base = new URL(basePath, BASE_URL);
+        doc.querySelectorAll('[src], [href]').forEach(el => {
+          const attr = el.hasAttribute('src') ? 'src' : 'href';
+          let val = el.getAttribute(attr);
+          if (!val) return;
+          if (/^(https?:)?\/\//.test(val) || val.startsWith('data:')) return;
+          if (val.startsWith('assets/')) {
+            // Use local asset path
+            el.setAttribute(attr, './' + val);
+            return;
+          }
+          let absUrl = new URL(val, base).pathname + new URL(val, base).search + new URL(val, base).hash;
+          el.setAttribute(attr, encodeUVPath(absUrl));
+        });
+        // Extract head elements (title, meta, link, style, etc.)
+        const headElements = Array.from(doc.head.children).map(el => el.cloneNode(true));
+        return { bodyHTML: doc.body.innerHTML, headElements };
+      }
+
+      // Replace head elements with those from the proxied page
+      function updateHead(newHeadElements) {
+        const head = document.head;
+        // Remove previously injected head elements (marked with data-proxy-head)
+        head.querySelectorAll('[data-proxy-head]').forEach(el => el.remove());
+        // Add new head elements
+        newHeadElements.forEach(el => {
+          el.setAttribute('data-proxy-head', '');
+          head.appendChild(el);
+        });
+      }
+
+      // Intercept all link clicks to fetch via proxy
+      function interceptLinks() {
+        contentDiv.querySelectorAll('a[href]').forEach(a => {
+          a.addEventListener('click', function(e) {
+            const href = a.getAttribute('href');
+            if (!href.startsWith('/uv')) return; // Only intercept UV-encoded links
+            e.preventDefault();
+            // Remove BASE_URL and decode
+            let path = decodeURIComponent(href.replace('/uv', ''));
+            fetchAndRender(path);
+          });
+        });
+      }
+
+      // Initial load
+      fetchAndRender('/');
+    </script>
+    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/assets/js/script.js"></script>
+  </body>
 </html>
