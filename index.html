@@ -1,152 +1,107 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.bundle.js"></script>
-    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/uv.config.js"></script>
-    <script>
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register(
-            "https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/uv/sw.js",
-            {
-              scope: __uv$config.prefix,
-            }
-          );
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ColdNova Fullscreen Proxy</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    #proxy-container {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      box-sizing: border-box;
+    }
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1.5rem;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading ColdNova...</div>
+  <div id="proxy-container"></div>
+
+  <script>
+    const container = document.getElementById('proxy-container');
+    const loading = document.getElementById('loading');
+    const targetUrl = 'https://coldnova.xyz/';
+
+    // Rewrite relative URLs in the fetched HTML
+    function rewriteUrls(doc, baseUrl) {
+      const elements = doc.querySelectorAll('[href], [src]');
+      elements.forEach(el => {
+        if (el.hasAttribute('href')) {
+          el.href = new URL(el.getAttribute('href'), baseUrl).href;
+        }
+        if (el.hasAttribute('src')) {
+          el.src = new URL(el.getAttribute('src'), baseUrl).href;
+        }
+      });
+
+      // Intercept links to stay in the proxy
+      doc.querySelectorAll('a').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          loadPage(a.href);
         });
-      }
-    </script>
-    <style>
-      html, body {
-        height: 100%;
-        width: 100%;
-        margin: 0;
-        padding: 0;
-      }
-      body {
-        background-color: #111;
-        color: white;
-        font-family: roboto, sans-serif;
-        height: 100vh;
-        width: 100vw;
-        margin: 0;
-        padding: 0;
-      }
-      #proxy-content {
-        min-height: 100vh;
-        min-width: 100vw;
-        background: #111;
-        color: white;
-        box-sizing: border-box;
-      }
-      @property --angle {
-        syntax: "<angle>";
-        initial-value: 0deg;
-        inherits: false;
-      }
-      .inputborder {
-        padding: 4px;
-        position: relative;
-        border-radius: 15px;
-        background: conic-gradient(from var(--angle), blue, transparent 20%);
-        animation: spin 1.5s linear infinite;
-      }
-      @keyframes spin {
-        from {
-          --angle: 0deg;
-        }
-        to {
-          --angle: 360deg;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="proxy-content"></div>
-    <script>
-      // UV Proxy base
-      const BASE_URL = 'https://coldnova.xyz';
-      const contentDiv = document.getElementById('proxy-content');
-      let currentPath = '/';
+      });
+    }
 
-      // Utility to encode a path for UV
-      function encodeUVPath(path) {
-        // For this example, just encodeURIComponent, but UV may use a different encoding
-        return '/uv' + path.split('/').map(encodeURIComponent).join('/');
-      }
-
-      // Fetch and render a page through the proxy
-      async function fetchAndRender(path) {
-        currentPath = path;
-        const proxiedUrl = `${BASE_URL}${path}`;
-        try {
-          const resp = await fetch(proxiedUrl, { credentials: 'omit' });
-          if (!resp.ok) throw new Error('Failed to fetch');
-          let html = await resp.text();
-          // Parse and rewrite
-          const { bodyHTML, headElements } = rewriteRelativePathsAndExtractHead(html, path);
-          // Render body
-          contentDiv.innerHTML = bodyHTML;
-          // Render head elements
-          updateHead(headElements);
-          interceptLinks();
-        } catch (e) {
-          contentDiv.innerHTML = `<div style='color:red;padding:2em;'>Failed to load: ${e.message}</div>`;
-        }
-      }
-
-      // Rewrite relative paths and extract head elements
-      function rewriteRelativePathsAndExtractHead(html, basePath) {
+    async function loadPage(url) {
+      try {
+        loading.style.display = 'block';
+        container.innerHTML = '';
+        const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
+        const htmlText = await response.text();
         const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const base = new URL(basePath, BASE_URL);
-        doc.querySelectorAll('[src], [href]').forEach(el => {
-          const attr = el.hasAttribute('src') ? 'src' : 'href';
-          let val = el.getAttribute(attr);
-          if (!val) return;
-          if (/^(https?:)?\/\//.test(val) || val.startsWith('data:')) return;
-          if (val.startsWith('assets/')) {
-            // Use local asset path
-            el.setAttribute(attr, './' + val);
-            return;
-          }
-          let absUrl = new URL(val, base).pathname + new URL(val, base).search + new URL(val, base).hash;
-          el.setAttribute(attr, BASE_URL + encodeUVPath(absUrl));
-        });
-        // Extract head elements (title, meta, link, style, etc.)
-        const headElements = Array.from(doc.head.children).map(el => el.cloneNode(true));
-        return { bodyHTML: doc.body.innerHTML, headElements };
-      }
+        const doc = parser.parseFromString(htmlText, 'text/html');
 
-      // Replace head elements with those from the proxied page
-      function updateHead(newHeadElements) {
-        const head = document.head;
-        // Remove previously injected head elements (marked with data-proxy-head)
-        head.querySelectorAll('[data-proxy-head]').forEach(el => el.remove());
-        // Add new head elements
-        newHeadElements.forEach(el => {
-          el.setAttribute('data-proxy-head', '');
-          head.appendChild(el);
-        });
-      }
+        rewriteUrls(doc, url);
 
-      // Intercept all link clicks to fetch via proxy
-      function interceptLinks() {
-        contentDiv.querySelectorAll('a[href]').forEach(a => {
-          a.addEventListener('click', function(e) {
-            const href = a.getAttribute('href');
-            if (!href.startsWith('/uv')) return; // Only intercept UV-encoded links
-            e.preventDefault();
-            // Remove BASE_URL and decode
-            let path = decodeURIComponent(href.replace('/uv', ''));
-            fetchAndRender(path);
-          });
+        // Inject external CSS
+        const stylesheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
+        stylesheets.forEach(link => {
+          const newLink = document.createElement('link');
+          newLink.rel = 'stylesheet';
+          newLink.href = link.href;
+          document.head.appendChild(newLink);
         });
-      }
 
-      // Initial load
-      fetchAndRender('/');
-    </script>
-    <script src="https://raw.githubusercontent.com/developers-fun/DF-PROXY/refs/heads/main/public/assets/js/script.js"></script>
-  </body>
+        // Inject inline styles
+        const inlineStyles = Array.from(doc.querySelectorAll('style'));
+        inlineStyles.forEach(style => {
+          const newStyle = document.createElement('style');
+          newStyle.textContent = style.textContent;
+          document.head.appendChild(newStyle);
+        });
+
+        // Append body content to container
+        Array.from(doc.body.children).forEach(child => container.appendChild(child));
+
+      } catch (err) {
+        container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
+        console.error(err);
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+
+    // Always load ColdNova on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadPage(targetUrl);
+    });
+  </script>
+</body>
 </html>
