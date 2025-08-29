@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ColdNova Fullscreen Proxy</title>
   <style>
     html, body {
@@ -12,12 +12,16 @@
       width: 100%;
       overflow: hidden;
       font-family: sans-serif;
+      background: #fff;
     }
     #proxy-container {
       width: 100%;
       height: 100%;
       overflow: auto;
       box-sizing: border-box;
+      display: block;
+      background: #fff;
+      visibility: visible !important;
     }
     #loading {
       position: fixed;
@@ -26,6 +30,7 @@
       transform: translate(-50%, -50%);
       font-size: 1.5rem;
       color: #333;
+      z-index: 9999;
     }
     .uv-replaced {
       border: 1px dashed #aaa;
@@ -47,36 +52,51 @@
   const loading = document.getElementById('loading');
   const targetUrl = 'https://coldnova.xyz/';
 
-  // ---- PATCH: Intercept document.write ----
-  // This ensures iframe and embed tags never break rendering.
+  // ===========================================
+  // FIX #1: SAFELY HANDLE document.write CALLS
+  // ===========================================
   (function() {
     const originalWrite = document.write;
-    document.write = function(...args) {
+    const originalWriteln = document.writeln;
+
+    function safeWrite(html) {
       try {
-        // Combine args into one string (some scripts call write multiple times)
-        let html = args.join('');
-        // Replace iframe and embed with placeholders BEFORE insertion
-        html = html.replace(/<iframe\b[^>]*>/gi, '<div class="uv-replaced">[iframe removed]</div>');
-        html = html.replace(/<embed\b[^>]*>/gi, '<div class="uv-replaced">[embed removed]</div>');
-        return originalWrite.call(document, html);
+        if (typeof html !== "string") return;
+        // Sanitize iframe & embed tags BEFORE inserting them
+        html = html.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi,
+          '<div class="uv-replaced">[iframe removed]</div>');
+        html = html.replace(/<embed\b[^>]*>/gi,
+          '<div class="uv-replaced">[embed removed]</div>');
+
+        // Append to proxy container instead of replacing full document
+        const temp = document.createElement("div");
+        temp.innerHTML = html;
+        while (temp.firstChild) container.appendChild(temp.firstChild);
       } catch (err) {
-        console.error('document.write interception failed:', err);
+        console.error("document.write interception failed:", err);
       }
-    };
+    }
+
+    document.write = function(...args) { safeWrite(args.join("")); };
+    document.writeln = function(...args) { safeWrite(args.join("") + "\n"); };
   })();
 
-  // ---- Clean up ads from proxied page ----
+  // ===========================================
+  // CLEAN UP ADS & TRACKERS
+  // ===========================================
   function removeAds(doc) {
     doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
     doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
   }
 
-  // ---- Rewrite URLs + convert iframe/embed to div placeholders ----
+  // ===========================================
+  // REWRITE URLs + HANDLE IFRAMES & EMBEDS
+  // ===========================================
   function rewriteUrls(doc, baseUrl) {
     const elements = doc.querySelectorAll('[href], [src]');
     elements.forEach(el => {
-      if (el.tagName.toLowerCase() === 'iframe' || el.tagName.toLowerCase() === 'embed') {
-        // Replace with placeholder
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'iframe' || tag === 'embed') {
         const src = el.getAttribute('src');
         const absUrl = src ? new URL(src, baseUrl).href : null;
 
@@ -85,7 +105,6 @@
         placeholder.textContent = 'Loading embedded content...';
         el.replaceWith(placeholder);
 
-        // If src exists, attempt to load iframe/embed content into div
         if (absUrl) loadIframeDiv(placeholder, absUrl);
       } else {
         if (el.hasAttribute('href')) {
@@ -106,11 +125,15 @@
     });
   }
 
-  // ---- Normal page loader ----
+  // ===========================================
+  // MAIN PAGE LOADER
+  // ===========================================
   async function loadPage(url) {
     try {
       loading.style.display = 'block';
       container.innerHTML = '';
+
+      // Use CORS proxy for fetching HTML
       const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
       const htmlText = await response.text();
       const parser = new DOMParser();
@@ -119,7 +142,7 @@
       removeAds(doc);
       rewriteUrls(doc, url);
 
-      // Load external stylesheets
+      // Apply stylesheets from proxied page
       doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
         const newLink = document.createElement('link');
         newLink.rel = 'stylesheet';
@@ -127,24 +150,29 @@
         document.head.appendChild(newLink);
       });
 
-      // Load inline styles
+      // Apply inline <style> blocks
       doc.querySelectorAll('style').forEach(style => {
         const newStyle = document.createElement('style');
         newStyle.textContent = style.textContent;
         document.head.appendChild(newStyle);
       });
 
-      // Append main content
+      // Inject parsed body content into proxy container
       Array.from(doc.body.children).forEach(child => container.appendChild(child));
+
     } catch (err) {
       container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
       console.error(err);
     } finally {
+      // Ensure visibility after parsing content
+      container.style.visibility = 'visible';
       loading.style.display = 'none';
     }
   }
 
-  // ---- Loader for iframe/embed placeholders ----
+  // ===========================================
+  // IFRAME & EMBED LOADER
+  // ===========================================
   async function loadIframeDiv(div, url) {
     try {
       const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
@@ -163,7 +191,9 @@
     }
   }
 
-  // ---- Auto-load ColdNova ----
+  // ===========================================
+  // INITIAL LOAD
+  // ===========================================
   window.addEventListener('DOMContentLoaded', () => {
     loadPage(targetUrl);
   });
