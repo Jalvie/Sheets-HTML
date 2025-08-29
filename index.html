@@ -38,20 +38,29 @@
   const loading = document.getElementById('loading');
   const targetUrl = 'https://coldnova.xyz/';
 
-  // Rewrite relative URLs and process iframes
+  // Clean ads
+  function removeAds(doc) {
+    doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
+    doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
+  }
+
+  // Rewrites and processes iframes as divs
   function rewriteUrls(doc, baseUrl) {
     const elements = doc.querySelectorAll('[href], [src]');
     elements.forEach(el => {
       if (el.tagName.toLowerCase() === 'iframe') {
-        // Handle iframe separately
         const iframeSrc = el.getAttribute('src');
         if (iframeSrc) {
           const absUrl = new URL(iframeSrc, baseUrl).href;
-          el.removeAttribute('src'); // remove original src
-          el.dataset.proxySrc = absUrl; // store proxied src
+          const iframeDiv = document.createElement('div');
+          iframeDiv.style.border = '1px solid #ccc';
+          iframeDiv.style.margin = '10px 0';
+          iframeDiv.style.minHeight = '200px';
+          iframeDiv.textContent = 'Loading embed...';
+          el.replaceWith(iframeDiv);
 
-          // Replace iframe with processed content
-          loadIframe(el, absUrl);
+          // load iframe content into div
+          loadIframeDiv(iframeDiv, absUrl);
         }
       } else {
         if (el.hasAttribute('href')) {
@@ -63,7 +72,7 @@
       }
     });
 
-    // Intercept links to stay in proxy
+    // Make links stay inside proxy
     doc.querySelectorAll('a').forEach(a => {
       a.addEventListener('click', e => {
         e.preventDefault();
@@ -72,12 +81,7 @@
     });
   }
 
-  // Remove ads
-  function removeAds(doc) {
-    doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
-    doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
-  }
-
+  // Normal page loader
   async function loadPage(url) {
     try {
       loading.style.display = 'block';
@@ -90,7 +94,7 @@
       removeAds(doc);
       rewriteUrls(doc, url);
 
-      // Inject CSS
+      // CSS
       doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
         const newLink = document.createElement('link');
         newLink.rel = 'stylesheet';
@@ -98,14 +102,14 @@
         document.head.appendChild(newLink);
       });
 
-      // Inject inline styles
+      // inline <style>
       doc.querySelectorAll('style').forEach(style => {
         const newStyle = document.createElement('style');
         newStyle.textContent = style.textContent;
         document.head.appendChild(newStyle);
       });
 
-      // Append body
+      // Put page content inside container
       Array.from(doc.body.children).forEach(child => container.appendChild(child));
 
     } catch (err) {
@@ -116,8 +120,8 @@
     }
   }
 
-  // Load iframe content like the main page
-  async function loadIframe(iframeEl, url) {
+  // Loader for iframes → divs
+  async function loadIframeDiv(div, url) {
     try {
       const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
       const htmlText = await response.text();
@@ -127,22 +131,16 @@
       removeAds(doc);
       rewriteUrls(doc, url);
 
-      // Create wrapper div instead of real iframe
-      const wrapper = document.createElement('div');
-      wrapper.style.border = '1px solid #ccc';
-      wrapper.style.margin = '10px 0';
-      wrapper.style.padding = '5px';
-      wrapper.innerHTML = doc.body.innerHTML;
+      div.innerHTML = ''; // clear "Loading embed..."
+      Array.from(doc.body.children).forEach(child => div.appendChild(child));
 
-      iframeEl.replaceWith(wrapper);
     } catch (err) {
-      const errorMsg = document.createElement('div');
-      errorMsg.style.color = 'red';
-      errorMsg.textContent = `Failed to load iframe: ${err.message}`;
-      iframeEl.replaceWith(errorMsg);
+      div.innerHTML = `<p style="color:red;">Failed to load embed: ${err.message}</p>`;
+      console.error(err);
     }
   }
 
+  // Auto-load ColdNova
   window.addEventListener('DOMContentLoaded', () => {
     loadPage(targetUrl);
   });
