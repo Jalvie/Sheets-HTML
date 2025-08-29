@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ColdNova CUZ I CAN - MADE BY JOE</title>
+  <title>ColdNova Fullscreen Proxy</title>
   <style>
     html, body {
       margin: 0;
@@ -59,6 +59,14 @@
       });
     }
 
+    // Remove ad-related elements from the document
+    function removeAds(doc) {
+      // Remove Google Ads scripts
+      doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
+      // Remove Google ad containers
+      doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
+    }
+
     async function loadPage(url) {
       try {
         loading.style.display = 'block';
@@ -68,6 +76,7 @@
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlText, 'text/html');
 
+        removeAds(doc);      // Remove all ads
         rewriteUrls(doc, url);
 
         // Inject external CSS
