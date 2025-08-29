@@ -33,197 +33,92 @@
   <div id="loading">Loading ColdNova...</div>
   <div id="proxy-container"></div>
 
-<script>
-  const container = document.getElementById('proxy-container');
-  const loading = document.getElementById('loading');
-  const targetUrl = 'https://coldnova.xyz/';
-
-  function rewriteUrls(doc, baseUrl) {
-    console.log("🔄 Starting rewriteUrls()");
-    console.log("🌐 Base URL:", baseUrl);
-
-    const elements = doc.querySelectorAll('[href], [src]');
-    console.log("🔍 Found elements with href/src:", elements.length);
-
-    const tagNames = Array.from(elements).map(el => el.tagName.toLowerCase());
-    console.log("📌 Matched tags:", tagNames);
-
-    if (elements.length <= 1 && !tagNames.includes("iframe") && !tagNames.includes("a") && !tagNames.includes("img")) {
-        console.warn("⚠️ Only found scripts or minimal elements — maybe DOM isn't fully loaded.");
-    }
-
-    let iframeCounter = 0;
-
-    elements.forEach((el, index) => {
-        console.log(`\n======================`);
-        console.log(`🔹 Processing element #${index + 1}:`, el);
-        console.log("📌 Tag name:", el.tagName.toLowerCase());
-
-        try {
-            // Handle iframe/embed separately
-            if (el.tagName.toLowerCase() === 'iframe' || el.tagName.toLowerCase() === 'embed') {
-                console.log("🖼 Found iframe/embed:", el);
-
-                // Assign a unique ID to the iframe if it doesn't have one
-                iframeCounter++;
-                const iframeId = `iframe-${iframeCounter}`;
-                el.id = iframeId;
-                console.log(`🏷 Assigned iframe ID: #${iframeId}`);
-
-                // Get original size
-                const originalWidth = el.getAttribute("width") || el.style.width || el.offsetWidth || "600";
-                const originalHeight = el.getAttribute("height") || el.style.height || el.offsetHeight || "400";
-                console.log(`📏 Preserving iframe size: ${originalWidth}x${originalHeight}`);
-
-                const iframeSrc = el.getAttribute('src');
-                console.log("🔗 Original iframe src:", iframeSrc);
-
-                if (iframeSrc) {
-                    try {
-                        const absUrl = new URL(iframeSrc, baseUrl).href;
-                        console.log("✅ Resolved iframe absolute URL:", absUrl);
-
-                        // Remove original src to prevent auto-loading
-                        el.removeAttribute('src');
-                        el.dataset.proxySrc = absUrl;
-
-                        // Keep iframe dimensions intact
-                        el.style.width = typeof originalWidth === "number" ? originalWidth + "px" : originalWidth;
-                        el.style.height = typeof originalHeight === "number" ? originalHeight + "px" : originalHeight;
-
-                        console.log(`⏳ Calling loadIframe(#${iframeId})…`);
-                        loadIframe(el, absUrl, originalWidth, originalHeight);
-                    } catch (err) {
-                        console.error("❌ Failed to resolve iframe URL:", iframeSrc, err);
-                    }
-                } else {
-                    console.warn("⚠️ Iframe has no src attribute:", el);
+  <script>
+    const container = document.getElementById('proxy-container');
+    const loading = document.getElementById('loading');
+    const targetUrl = 'https://coldnova.xyz/';
+    
+    function rewriteUrls(doc, baseUrl) {
+        const elements = doc.querySelectorAll('[href], [src], iframe');
+    
+        elements.forEach(el => {
+            const tag = el.tagName.toLowerCase();
+    
+            if (tag === 'iframe') {
+                const src = el.getAttribute('src');
+                if (src) {
+                    // Replace iframe src with proxied URL
+                    const proxied = 'https://corsproxy.io/?' + encodeURIComponent(new URL(src, baseUrl).href);
+                    el.setAttribute('src', proxied);
                 }
             } else {
-                // Handle href
                 if (el.hasAttribute('href')) {
-                    const originalHref = el.getAttribute('href');
-                    console.log("🔗 Original href:", originalHref);
+                    const href = el.getAttribute('href');
                     try {
-                        el.href = new URL(originalHref, baseUrl).href;
-                        console.log("✅ Resolved absolute href:", el.href);
-                    } catch (err) {
-                        console.error("❌ Failed to resolve href:", originalHref, err);
-                    }
+                        el.setAttribute('href', new URL(href, baseUrl).href);
+                    } catch {}
                 }
-
-                // Handle src
                 if (el.hasAttribute('src')) {
-                    const originalSrc = el.getAttribute('src');
-                    console.log("🖼 Original src:", originalSrc);
+                    const src = el.getAttribute('src');
                     try {
-                        el.src = new URL(originalSrc, baseUrl).href;
-                        console.log("✅ Resolved absolute src:", el.src);
-                    } catch (err) {
-                        console.error("❌ Failed to resolve src:", originalSrc, err);
-                    }
+                        el.setAttribute('src', new URL(src, baseUrl).href);
+                    } catch {}
                 }
             }
-        } catch (err) {
-            console.error("🔥 Unexpected error processing element:", el, err);
-        }
-    });
-
-    // Intercept <a> link clicks
-    const links = doc.querySelectorAll('a');
-    console.log("\n🔗 Setting up link interception for", links.length, "links");
-
-    links.forEach((a, i) => {
-        console.log(`🛠 Setting click handler for link #${i + 1}:`, a.href);
-        a.addEventListener('click', e => {
-            console.log(`🖱 Click intercepted on: ${a.href}`);
-            e.preventDefault();
-            try {
-                loadPage(a.href);
-            } catch (err) {
-                console.error("❌ Error calling loadPage for:", a.href, err);
+    
+            // Intercept <a> clicks
+            if (tag === 'a') {
+                el.addEventListener('click', e => {
+                    e.preventDefault();
+                    loadPage(el.href);
+                });
             }
         });
+    }
+    
+    function removeAds(doc) {
+        doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
+        doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
+    }
+    
+    async function loadPage(url) {
+        loading.style.display = 'block';
+        container.innerHTML = '';
+        try {
+            const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+    
+            removeAds(doc);
+            rewriteUrls(doc, url);
+    
+            // Inject styles
+            doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+                const newLink = document.createElement('link');
+                newLink.rel = 'stylesheet';
+                newLink.href = link.href;
+                document.head.appendChild(newLink);
+            });
+            doc.querySelectorAll('style').forEach(style => {
+                const newStyle = document.createElement('style');
+                newStyle.textContent = style.textContent;
+                document.head.appendChild(newStyle);
+            });
+    
+            // Append body content
+            Array.from(doc.body.children).forEach(child => container.appendChild(child));
+        } catch (err) {
+            container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
+            console.error(err);
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+    
+    window.addEventListener('DOMContentLoaded', () => {
+        loadPage(targetUrl);
     });
-
-    console.log("✅ Finished rewriteUrls()");
-}
-
-
-  // Remove ads
-  function removeAds(doc) {
-    doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
-    doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
-  }
-
-  async function loadPage(url) {
-    try {
-      loading.style.display = 'block';
-      container.innerHTML = '';
-      const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
-      const htmlText = await response.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-
-      removeAds(doc);
-      rewriteUrls(doc, url);
-
-      // Inject CSS
-      doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-        const newLink = document.createElement('link');
-        newLink.rel = 'stylesheet';
-        newLink.href = link.href;
-        document.head.appendChild(newLink);
-      });
-
-      // Inject inline styles
-      doc.querySelectorAll('style').forEach(style => {
-        const newStyle = document.createElement('style');
-        newStyle.textContent = style.textContent;
-        document.head.appendChild(newStyle);
-      });
-
-      // Append body
-      Array.from(doc.body.children).forEach(child => container.appendChild(child));
-
-    } catch (err) {
-      container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
-      console.error(err);
-    } finally {
-      loading.style.display = 'none';
-    }
-  }
-
-  // Load iframe content like the main page
-  async function loadIframe(iframeEl, url) {
-    try {
-      const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
-      const htmlText = await response.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-
-      removeAds(doc);
-      rewriteUrls(doc, url);
-
-      // Create wrapper div instead of real iframe
-      const wrapper = document.createElement('div');
-      wrapper.style.border = '1px solid #ccc';
-      wrapper.style.margin = '10px 0';
-      wrapper.style.padding = '5px';
-      wrapper.innerHTML = doc.body.innerHTML;
-
-      iframeEl.replaceWith(wrapper);
-    } catch (err) {
-      const errorMsg = document.createElement('div');
-      errorMsg.style.color = 'red';
-      errorMsg.textContent = `Failed to load iframe: ${err.message}`;
-      iframeEl.replaceWith(errorMsg);
-    }
-  }
-
-  window.addEventListener('DOMContentLoaded', () => {
-    loadPage(targetUrl);
-  });
-</script>
+    </script>`    
 </body>
 </html>
