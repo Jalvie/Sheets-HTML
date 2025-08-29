@@ -27,6 +27,15 @@
       font-size: 1.5rem;
       color: #333;
     }
+    .uv-replaced {
+      border: 1px dashed #aaa;
+      background: #f8f8f8;
+      padding: 10px;
+      margin: 10px 0;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #555;
+    }
   </style>
 </head>
 <body>
@@ -38,30 +47,46 @@
   const loading = document.getElementById('loading');
   const targetUrl = 'https://coldnova.xyz/';
 
-  // Clean ads
+  // ---- PATCH: Intercept document.write ----
+  // This ensures iframe and embed tags never break rendering.
+  (function() {
+    const originalWrite = document.write;
+    document.write = function(...args) {
+      try {
+        // Combine args into one string (some scripts call write multiple times)
+        let html = args.join('');
+        // Replace iframe and embed with placeholders BEFORE insertion
+        html = html.replace(/<iframe\b[^>]*>/gi, '<div class="uv-replaced">[iframe removed]</div>');
+        html = html.replace(/<embed\b[^>]*>/gi, '<div class="uv-replaced">[embed removed]</div>');
+        return originalWrite.call(document, html);
+      } catch (err) {
+        console.error('document.write interception failed:', err);
+      }
+    };
+  })();
+
+  // ---- Clean up ads from proxied page ----
   function removeAds(doc) {
     doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
     doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
   }
 
-  // Rewrites and processes iframes as divs
+  // ---- Rewrite URLs + convert iframe/embed to div placeholders ----
   function rewriteUrls(doc, baseUrl) {
     const elements = doc.querySelectorAll('[href], [src]');
     elements.forEach(el => {
-      if (el.tagName.toLowerCase() === 'iframe') {
-        const iframeSrc = el.getAttribute('src');
-        if (iframeSrc) {
-          const absUrl = new URL(iframeSrc, baseUrl).href;
-          const iframeDiv = document.createElement('div');
-          iframeDiv.style.border = '1px solid #ccc';
-          iframeDiv.style.margin = '10px 0';
-          iframeDiv.style.minHeight = '200px';
-          iframeDiv.textContent = 'Loading embed...';
-          el.replaceWith(iframeDiv);
+      if (el.tagName.toLowerCase() === 'iframe' || el.tagName.toLowerCase() === 'embed') {
+        // Replace with placeholder
+        const src = el.getAttribute('src');
+        const absUrl = src ? new URL(src, baseUrl).href : null;
 
-          // load iframe content into div
-          loadIframeDiv(iframeDiv, absUrl);
-        }
+        const placeholder = document.createElement('div');
+        placeholder.className = 'uv-replaced';
+        placeholder.textContent = 'Loading embedded content...';
+        el.replaceWith(placeholder);
+
+        // If src exists, attempt to load iframe/embed content into div
+        if (absUrl) loadIframeDiv(placeholder, absUrl);
       } else {
         if (el.hasAttribute('href')) {
           el.href = new URL(el.getAttribute('href'), baseUrl).href;
@@ -72,7 +97,7 @@
       }
     });
 
-    // Make links stay inside proxy
+    // Force links to stay inside proxy
     doc.querySelectorAll('a').forEach(a => {
       a.addEventListener('click', e => {
         e.preventDefault();
@@ -81,7 +106,7 @@
     });
   }
 
-  // Normal page loader
+  // ---- Normal page loader ----
   async function loadPage(url) {
     try {
       loading.style.display = 'block';
@@ -94,7 +119,7 @@
       removeAds(doc);
       rewriteUrls(doc, url);
 
-      // CSS
+      // Load external stylesheets
       doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
         const newLink = document.createElement('link');
         newLink.rel = 'stylesheet';
@@ -102,16 +127,15 @@
         document.head.appendChild(newLink);
       });
 
-      // inline <style>
+      // Load inline styles
       doc.querySelectorAll('style').forEach(style => {
         const newStyle = document.createElement('style');
         newStyle.textContent = style.textContent;
         document.head.appendChild(newStyle);
       });
 
-      // Put page content inside container
+      // Append main content
       Array.from(doc.body.children).forEach(child => container.appendChild(child));
-
     } catch (err) {
       container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
       console.error(err);
@@ -120,7 +144,7 @@
     }
   }
 
-  // Loader for iframes → divs
+  // ---- Loader for iframe/embed placeholders ----
   async function loadIframeDiv(div, url) {
     try {
       const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
@@ -131,16 +155,15 @@
       removeAds(doc);
       rewriteUrls(doc, url);
 
-      div.innerHTML = ''; // clear "Loading embed..."
+      div.innerHTML = '';
       Array.from(doc.body.children).forEach(child => div.appendChild(child));
-
     } catch (err) {
       div.innerHTML = `<p style="color:red;">Failed to load embed: ${err.message}</p>`;
       console.error(err);
     }
   }
 
-  // Auto-load ColdNova
+  // ---- Auto-load ColdNova ----
   window.addEventListener('DOMContentLoaded', () => {
     loadPage(targetUrl);
   });
