@@ -19,7 +19,6 @@
       height: 100%;
       overflow: auto;
       box-sizing: border-box;
-      display: block;
       background: #fff;
       visibility: visible !important;
     }
@@ -32,14 +31,10 @@
       color: #333;
       z-index: 9999;
     }
-    .uv-replaced {
-      border: 1px dashed #aaa;
-      background: #f8f8f8;
-      padding: 10px;
-      margin: 10px 0;
-      text-align: center;
-      font-size: 0.9rem;
-      color: #555;
+    iframe, embed {
+      display: block;
+      max-width: 100%;
+      border: none;
     }
   </style>
 </head>
@@ -62,13 +57,7 @@
     function safeWrite(html) {
       try {
         if (typeof html !== "string") return;
-        // Sanitize iframe & embed tags BEFORE inserting them
-        html = html.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi,
-          '<div class="uv-replaced">[iframe removed]</div>');
-        html = html.replace(/<embed\b[^>]*>/gi,
-          '<div class="uv-replaced">[embed removed]</div>');
-
-        // Append to proxy container instead of replacing full document
+        // Don't remove iframes anymore; just append content safely
         const temp = document.createElement("div");
         temp.innerHTML = html;
         while (temp.firstChild) container.appendChild(temp.firstChild);
@@ -90,33 +79,26 @@
   }
 
   // ===========================================
-  // REWRITE URLs + HANDLE IFRAMES & EMBEDS
+  // FIX #2: PROPERLY REWRITE IFRAMES & EMBEDS
   // ===========================================
   function rewriteUrls(doc, baseUrl) {
     const elements = doc.querySelectorAll('[href], [src]');
     elements.forEach(el => {
       const tag = el.tagName.toLowerCase();
-      if (tag === 'iframe' || tag === 'embed') {
-        const src = el.getAttribute('src');
-        const absUrl = src ? new URL(src, baseUrl).href : null;
-
-        const placeholder = document.createElement('div');
-        placeholder.className = 'uv-replaced';
-        placeholder.textContent = 'Loading embedded content...';
-        el.replaceWith(placeholder);
-
-        if (absUrl) loadIframeDiv(placeholder, absUrl);
-      } else {
-        if (el.hasAttribute('href')) {
-          el.href = new URL(el.getAttribute('href'), baseUrl).href;
-        }
-        if (el.hasAttribute('src')) {
-          el.src = new URL(el.getAttribute('src'), baseUrl).href;
+      const attr = el.hasAttribute('src') ? 'src' : 'href';
+      if (el.hasAttribute(attr)) {
+        const original = el.getAttribute(attr);
+        try {
+          const absUrl = new URL(original, baseUrl).href;
+          // Route all requests through proxy for proper game loading
+          el.setAttribute(attr, 'https://corsproxy.io/?' + encodeURIComponent(absUrl));
+        } catch (e) {
+          console.warn("URL rewrite failed:", original);
         }
       }
     });
 
-    // Force links to stay inside proxy
+    // Ensure links stay inside proxy
     doc.querySelectorAll('a').forEach(a => {
       a.addEventListener('click', e => {
         e.preventDefault();
@@ -133,7 +115,6 @@
       loading.style.display = 'block';
       container.innerHTML = '';
 
-      // Use CORS proxy for fetching HTML
       const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
       const htmlText = await response.text();
       const parser = new DOMParser();
@@ -150,44 +131,21 @@
         document.head.appendChild(newLink);
       });
 
-      // Apply inline <style> blocks
+      // Apply inline styles
       doc.querySelectorAll('style').forEach(style => {
         const newStyle = document.createElement('style');
         newStyle.textContent = style.textContent;
         document.head.appendChild(newStyle);
       });
 
-      // Inject parsed body content into proxy container
+      // Inject proxied HTML body content
       Array.from(doc.body.children).forEach(child => container.appendChild(child));
-
     } catch (err) {
       container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
       console.error(err);
     } finally {
-      // Ensure visibility after parsing content
       container.style.visibility = 'visible';
       loading.style.display = 'none';
-    }
-  }
-
-  // ===========================================
-  // IFRAME & EMBED LOADER
-  // ===========================================
-  async function loadIframeDiv(div, url) {
-    try {
-      const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
-      const htmlText = await response.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-
-      removeAds(doc);
-      rewriteUrls(doc, url);
-
-      div.innerHTML = '';
-      Array.from(doc.body.children).forEach(child => div.appendChild(child));
-    } catch (err) {
-      div.innerHTML = `<p style="color:red;">Failed to load embed: ${err.message}</p>`;
-      console.error(err);
     }
   }
 
