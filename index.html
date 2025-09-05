@@ -37,88 +37,168 @@
     const container = document.getElementById('proxy-container');
     const loading = document.getElementById('loading');
     const targetUrl = 'https://coldnova.xyz/';
-    
-    function rewriteUrls(doc, baseUrl) {
-        const elements = doc.querySelectorAll('[href], [src], iframe');
-    
-        elements.forEach(el => {
-            const tag = el.tagName.toLowerCase();
-    
-            if (tag === 'iframe') {
-                const src = el.getAttribute('src');
-                if (src) {
-                    // Replace iframe src with proxied URL
-                    const proxied = 'https://corsproxy.io/?' + encodeURIComponent(new URL(src, baseUrl).href);
-                    el.setAttribute('src', proxied);
-                }
-            } else {
-                if (el.hasAttribute('href')) {
-                    const href = el.getAttribute('href');
-                    try {
-                        el.setAttribute('href', new URL(href, baseUrl).href);
-                    } catch {}
-                }
-                if (el.hasAttribute('src')) {
-                    const src = el.getAttribute('src');
-                    try {
-                        el.setAttribute('src', new URL(src, baseUrl).href);
-                    } catch {}
-                }
-            }
-    
-            // Intercept <a> clicks
-            if (tag === 'a') {
-                el.addEventListener('click', e => {
-                    e.preventDefault();
-                    loadPage(el.href);
-                });
-            }
-        });
+  
+    // Make proxied absolute URL
+    function proxyUrl(url, baseUrl) {
+      const abs = new URL(url, baseUrl || location.href).href;
+      return 'https://corsproxy.io/?' + encodeURIComponent(abs);
     }
-    
-    function removeAds(doc) {
-        doc.querySelectorAll('script[src*="googlesyndication"], script[src*="adsbygoogle"]').forEach(el => el.remove());
-        doc.querySelectorAll('ins.adsbygoogle, .ad-container, .ads-container, [id*="ad"], [class*="ad"]').forEach(el => el.remove());
-    }
-    
-    async function loadPage(url) {
-        loading.style.display = 'block';
-        container.innerHTML = '';
-        try {
-            const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
-            const html = await response.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-    
-            removeAds(doc);
-            rewriteUrls(doc, url);
-    
-            // Inject styles
-            doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-                const newLink = document.createElement('link');
-                newLink.rel = 'stylesheet';
-                newLink.href = link.href;
-                document.head.appendChild(newLink);
-            });
-            doc.querySelectorAll('style').forEach(style => {
-                const newStyle = document.createElement('style');
-                newStyle.textContent = style.textContent;
-                document.head.appendChild(newStyle);
-            });
-    
-            // Append body content
-            Array.from(doc.body.children).forEach(child => container.appendChild(child));
-        } catch (err) {
-            container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
-            console.error(err);
-        } finally {
-            loading.style.display = 'none';
+  
+    // --- Core rewriter ---
+    function rewriteDocument(doc, baseUrl) {
+      const nodes = doc.querySelectorAll('[href], [src], iframe, embed, object');
+  
+      nodes.forEach(el => {
+        const tag = el.tagName.toLowerCase();
+  
+        // absolutize href/src
+        if (el.hasAttribute('href')) {
+          try { el.setAttribute('href', new URL(el.getAttribute('href'), baseUrl).href); } catch {}
         }
+        if (el.hasAttribute('src')) {
+          try { el.setAttribute('src', new URL(el.getAttribute('src'), baseUrl).href); } catch {}
+        }
+  
+        // Special handling for EMBED
+        if (tag === 'embed' && el.getAttribute('src')) {
+          const originalSrc = new URL(el.getAttribute('src'), baseUrl).href;
+  
+          const div = document.createElement('div');
+          div.className = 'embed-container';
+          div.dataset.src = originalSrc;
+          div.textContent = `Loading embed: ${originalSrc}`;
+          el.replaceWith(div);
+  
+          // Load embed contents proxied
+          loadEmbed(div, originalSrc);
+          return;
+        }
+  
+        // Rewrite iframe/object with proxy
+        if (tag === 'iframe' && el.getAttribute('src')) {
+          el.setAttribute('src', proxyUrl(el.getAttribute('src'), baseUrl));
+        }
+        if (tag === 'object' && el.getAttribute('data')) {
+          el.setAttribute('data', proxyUrl(el.getAttribute('data'), baseUrl));
+        }
+  
+        // Intercept links → loadPage
+        if (tag === 'a') {
+          el.addEventListener('click', e => {
+            e.preventDefault();
+            loadPage(el.href);
+          });
+        }
+      });
     }
-    
-    window.addEventListener('DOMContentLoaded', () => {
-        loadPage(targetUrl);
+  
+    // --- Observe dynamic changes ---
+    function observeMutations(root, baseUrl) {
+      const observer = new MutationObserver(mutations => {
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === 1) {
+              rewriteDocument(node, baseUrl);
+            }
+          }
+          if (m.type === "attributes" && (m.attributeName === "src" || m.attributeName === "href")) {
+            rewriteDocument(m.target, baseUrl);
+          }
+        }
+      });
+  
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src", "href"]
+      });
+    }
+  
+    // --- Load a normal page ---
+    async function loadPage(url) {
+      loading.style.display = 'block';
+      container.innerHTML = '';
+  
+      try {
+        const response = await fetch(proxyUrl(url));
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+  
+        rewriteDocument(doc, url);
+  
+        // Inject styles
+        doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+          const newLink = document.createElement('link');
+          newLink.rel = 'stylesheet';
+          newLink.href = link.href;
+          document.head.appendChild(newLink);
+        });
+        doc.querySelectorAll('style').forEach(style => {
+          const newStyle = document.createElement('style');
+          newStyle.textContent = style.textContent;
+          document.head.appendChild(newStyle);
+        });
+  
+        // Append rewritten body
+        Array.from(doc.body.children).forEach(child => container.appendChild(child));
+  
+        // Watch dynamic changes
+        observeMutations(container, url);
+  
+      } catch (err) {
+        container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
+        console.error(err);
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+  
+    // --- Load embed like a mini-page ---
+    async function loadEmbed(div, url) {
+  div.innerHTML = ''; // clear existing content
+  div.dataset.loaded = "false";
+
+  try {
+    const response = await fetch(proxyUrl(url));
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    // Rewrite all URLs in the fetched document
+    rewriteDocument(doc, url);
+
+    // Inject styles into the embed container (not global head)
+    doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+      const newLink = document.createElement('link');
+      newLink.rel = 'stylesheet';
+      newLink.href = link.href;
+      div.appendChild(newLink);
     });
-    </script>`    
+    doc.querySelectorAll('style').forEach(style => {
+      const newStyle = document.createElement('style');
+      newStyle.textContent = style.textContent;
+      div.appendChild(newStyle);
+    });
+
+    // Append rewritten body content into embed container
+    Array.from(doc.body.children).forEach(child => div.appendChild(child));
+
+    // Watch dynamic changes inside the embed
+    observeMutations(div, url);
+
+    div.dataset.loaded = "true";
+  } catch (err) {
+    div.innerHTML = `<p style="color:red;">Failed to load embed: ${err.message}</p>`;
+    console.error(err);
+  }
+}
+
+  
+    window.addEventListener('DOMContentLoaded', () => {
+      loadPage(targetUrl);
+    });
+  </script>  
 </body>
 </html>
