@@ -1,204 +1,153 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ColdNova Fullscreen Proxy</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      width: 100%;
-      overflow: hidden;
-      font-family: sans-serif;
-    }
-    #proxy-container {
-      width: 100%;
-      height: 100%;
-      overflow: auto;
-      box-sizing: border-box;
-    }
-    #loading {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 1.5rem;
-      color: #333;
-    }
-  </style>
-</head>
-<body>
-  <div id="loading">Loading ColdNova...</div>
-  <div id="proxy-container"></div>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>UV Proxy Demo</title>
 
-  <script>
-    const container = document.getElementById('proxy-container');
-    const loading = document.getElementById('loading');
-    const targetUrl = 'https://coldnova.xyz/';
-  
-    // Make proxied absolute URL
-    function proxyUrl(url, baseUrl) {
-      const abs = new URL(url, baseUrl || location.href).href;
-      return 'https://corsproxy.io/?' + encodeURIComponent(abs);
-    }
-  
-    // --- Core rewriter ---
-    function rewriteDocument(doc, baseUrl) {
-      const nodes = doc.querySelectorAll('[href], [src], iframe, embed, object');
-  
-      nodes.forEach(el => {
-        const tag = el.tagName.toLowerCase();
-  
-        // absolutize href/src
-        if (el.hasAttribute('href')) {
-          try { el.setAttribute('href', new URL(el.getAttribute('href'), baseUrl).href); } catch {}
+    <script>console.log("🔍 Attempting to load Ultraviolet scripts…");</script>
+
+    <!-- Load UV runtime + config (client-side encoder) -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet/dist/uv.bundle.js"
+      onload="console.log('✅ uv.bundle.js loaded')"
+      onerror="console.error('❌ Failed to load uv.bundle.js')">
+    </script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet/dist/uv.config.js"
+      onload="console.log('✅ uv.config.js loaded')"
+      onerror="console.error('❌ Failed to load uv.config.js')">
+    </script>
+
+    <script>
+      window.addEventListener("DOMContentLoaded", () => {
+        console.log("📦 DOM ready — checking __uv$config...");
+        if (typeof __uv$config !== "undefined") {
+          console.log("✅ __uv$config detected:", __uv$config);
+        } else {
+          console.error("❌ __uv$config missing! Ultraviolet config failed.");
         }
-        if (el.hasAttribute('src')) {
-          try { el.setAttribute('src', new URL(el.getAttribute('src'), baseUrl).href); } catch {}
-        }
-  
-        // Special handling for EMBED
-        if (tag === 'embed' && el.getAttribute('src')) {
-          const originalSrc = new URL(el.getAttribute('src'), baseUrl).href;
-  
-          const div = document.createElement('div');
-          div.className = 'embed-container';
-          div.dataset.src = originalSrc;
-          div.textContent = `Loading embed: ${originalSrc}`;
-          el.replaceWith(div);
-  
-          // Load embed contents proxied
-          loadEmbed(div, originalSrc);
+      });
+    </script>
+  </head>
+  <body>
+    <div id="proxy-content">Loading…</div>
+
+    <script>
+      // Wait until UV config is defined
+      window.addEventListener("load", () => {
+        if (typeof __uv$config === "undefined") {
+          console.error("Ultraviolet config failed to load!");
+          document.getElementById("proxy-content").innerText =
+            "Error: Ultraviolet config not found.";
           return;
         }
-  
-        // Rewrite iframe/object with proxy
-        if (tag === 'iframe' && el.getAttribute('src')) {
-          el.setAttribute('src', proxyUrl(el.getAttribute('src'), baseUrl));
+
+        // Your deployed UV server base
+        const UV_SERVER = "https://ultraviolet-app-ebon-nu.vercel.app";
+        const TARGET_ORIGIN = "https://coldnova.xyz"; // site you want to proxy
+
+        const contentDiv = document.getElementById("proxy-content");
+        let currentPath = "/";
+
+        // Encode a full URL to route through UV server
+        function uvEncode(url) {
+          try {
+            const encoded = UV_SERVER + __uv$config.prefix + __uv$config.encodeUrl(url);
+            console.log("🔗 Encoding URL:", url, "→", encoded);
+            return encoded;
+          } catch (err) {
+            console.error("❌ uvEncode failed for", url, err);
+            return url;
+          }
         }
-        if (tag === 'object' && el.getAttribute('data')) {
-          el.setAttribute('data', proxyUrl(el.getAttribute('data'), baseUrl));
+
+        async function fetchAndRender(path) {
+          currentPath = path;
+          const proxiedUrl = uvEncode(TARGET_ORIGIN + path);
+          console.log("🌐 Fetching proxied URL:", proxiedUrl);
+
+          try {
+            const resp = await fetch(proxiedUrl, { credentials: "omit" });
+            console.log("📥 Response status:", resp.status);
+            if (!resp.ok) throw new Error("Failed to fetch via UV server");
+            let html = await resp.text();
+            console.log("📄 Fetched HTML length:", html.length);
+
+            const { bodyHTML, headElements } = rewriteDocument(html, TARGET_ORIGIN);
+
+            contentDiv.innerHTML = bodyHTML;
+            updateHead(headElements);
+            interceptLinks();
+          } catch (e) {
+            console.error("❌ fetchAndRender error:", e);
+            contentDiv.innerHTML = `<div style="color:red;padding:2em;">Failed to load: ${e.message}</div>`;
+          }
         }
-  
-        // Intercept links → loadPage
-        if (tag === 'a') {
-          el.addEventListener('click', e => {
-            e.preventDefault();
-            loadPage(el.href);
+
+        function rewriteDocument(html, baseUrl) {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+
+          const nodes = doc.querySelectorAll("[href], [src], iframe, embed, object");
+          console.log("🔧 Rewriting", nodes.length, "nodes");
+
+          nodes.forEach((el) => {
+            const tag = el.tagName.toLowerCase();
+
+            if (el.hasAttribute("href")) {
+              const newHref = new URL(el.getAttribute("href"), baseUrl).href;
+              el.setAttribute("href", uvEncode(newHref));
+            }
+            if (el.hasAttribute("src")) {
+              const newSrc = new URL(el.getAttribute("src"), baseUrl).href;
+              el.setAttribute("src", uvEncode(newSrc));
+            }
+
+            if (tag === "embed" && el.getAttribute("src")) {
+              const originalSrc = new URL(el.getAttribute("src"), baseUrl).href;
+              const div = document.createElement("div");
+              div.className = "embed-container";
+              div.dataset.src = uvEncode(originalSrc);
+              div.textContent = `Embed proxied: ${originalSrc}`;
+              el.replaceWith(div);
+            }
+          });
+
+          return {
+            bodyHTML: doc.body.innerHTML,
+            headElements: [...doc.head.children],
+          };
+        }
+
+        function updateHead(newHeadElements) {
+          const head = document.head;
+          head.querySelectorAll("[data-proxy-head]").forEach((el) => el.remove());
+
+          newHeadElements.forEach((el) => {
+            const clone = el.cloneNode(true);
+            clone.setAttribute("data-proxy-head", "");
+            if (clone.href) clone.href = uvEncode(clone.href);
+            if (clone.src) clone.src = uvEncode(clone.src);
+            head.appendChild(clone);
+          });
+          console.log("🧩 Updated head with", newHeadElements.length, "elements");
+        }
+
+        function interceptLinks() {
+          contentDiv.querySelectorAll("a[href]").forEach((a) => {
+            a.addEventListener("click", (e) => {
+              e.preventDefault();
+              let href = a.getAttribute("href");
+              if (!href) return;
+              console.log("🖱️ Intercepted link click:", href);
+              fetchAndRender(new URL(href, TARGET_ORIGIN).pathname);
+            });
           });
         }
+
+        // Initial load
+        fetchAndRender("/");
       });
-    }
-  
-    // --- Observe dynamic changes ---
-    function observeMutations(root, baseUrl) {
-      const observer = new MutationObserver(mutations => {
-        for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === 1) {
-              rewriteDocument(node, baseUrl);
-            }
-          }
-          if (m.type === "attributes" && (m.attributeName === "src" || m.attributeName === "href")) {
-            rewriteDocument(m.target, baseUrl);
-          }
-        }
-      });
-  
-      observer.observe(root, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["src", "href"]
-      });
-    }
-  
-    // --- Load a normal page ---
-    async function loadPage(url) {
-      loading.style.display = 'block';
-      container.innerHTML = '';
-  
-      try {
-        const response = await fetch(proxyUrl(url));
-        const html = await response.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-  
-        rewriteDocument(doc, url);
-  
-        // Inject styles
-        doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-          const newLink = document.createElement('link');
-          newLink.rel = 'stylesheet';
-          newLink.href = link.href;
-          document.head.appendChild(newLink);
-        });
-        doc.querySelectorAll('style').forEach(style => {
-          const newStyle = document.createElement('style');
-          newStyle.textContent = style.textContent;
-          document.head.appendChild(newStyle);
-        });
-  
-        // Append rewritten body
-        Array.from(doc.body.children).forEach(child => container.appendChild(child));
-  
-        // Watch dynamic changes
-        observeMutations(container, url);
-  
-      } catch (err) {
-        container.innerHTML = `<p style="color:red;">Failed to load page: ${err.message}</p>`;
-        console.error(err);
-      } finally {
-        loading.style.display = 'none';
-      }
-    }
-  
-    // --- Load embed like a mini-page ---
-    async function loadEmbed(div, url) {
-  div.innerHTML = ''; // clear existing content
-  div.dataset.loaded = "false";
-
-  try {
-    const response = await fetch(proxyUrl(url));
-    const html = await response.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-
-    // Rewrite all URLs in the fetched document
-    rewriteDocument(doc, url);
-
-    // Inject styles into the embed container (not global head)
-    doc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-      const newLink = document.createElement('link');
-      newLink.rel = 'stylesheet';
-      newLink.href = link.href;
-      div.appendChild(newLink);
-    });
-    doc.querySelectorAll('style').forEach(style => {
-      const newStyle = document.createElement('style');
-      newStyle.textContent = style.textContent;
-      div.appendChild(newStyle);
-    });
-
-    // Append rewritten body content into embed container
-    Array.from(doc.body.children).forEach(child => div.appendChild(child));
-
-    // Watch dynamic changes inside the embed
-    observeMutations(div, url);
-
-    div.dataset.loaded = "true";
-  } catch (err) {
-    div.innerHTML = `<p style="color:red;">Failed to load embed: ${err.message}</p>`;
-    console.error(err);
-  }
-}
-
-  
-    window.addEventListener('DOMContentLoaded', () => {
-      loadPage(targetUrl);
-    });
-  </script>  
-</body>
+    </script>
+  </body>
 </html>
